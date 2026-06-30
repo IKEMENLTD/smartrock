@@ -14,7 +14,9 @@ export type DomainErrorCode =
   | "not_found"
   | "forbidden"
   | "already_finalized"
-  | "invalid_request";
+  | "invalid_request"
+  | "unauthorized"
+  | "validation";
 
 export class DomainError extends Error {
   constructor(
