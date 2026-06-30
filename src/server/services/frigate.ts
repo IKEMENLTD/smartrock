@@ -2,14 +2,14 @@
 // Frigate の /api/stats からカメラ毎の録画状態を取得する。シンプル実装。
 // モジュール import 時に例外を投げない。FRIGATE_URL 未設定なら空配列。
 
+import { config } from "@/server/lib/config";
 import { logger } from "@/server/lib/logger";
 import { withRetry } from "@/server/lib/retry";
 import type { FrigateCameraStatus, FrigateService } from "./types";
 
-// 注: FRIGATE_URL は config.ts に未定義のため env を直接参照 (追加 env)。
-//     例: http://frigate.local:5000
+// FRIGATE_URL は config.frigate.url 経由 (例: http://frigate:5000)。
 function frigateUrl(): string {
-  return process.env.FRIGATE_URL ?? "";
+  return config.frigate.url;
 }
 
 // /api/stats の cameras エントリ (必要部分のみ)。

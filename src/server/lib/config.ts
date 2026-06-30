@@ -45,6 +45,9 @@ export const config = {
     secretKey: env("STRIPE_SECRET_KEY") ?? "",
     webhookSecret: env("STRIPE_WEBHOOK_SECRET") ?? "",
   },
+  frigate: {
+    url: env("FRIGATE_URL") ?? "",
+  },
   auth: {
     secret: env("AUTH_SECRET") ?? "dev-secret",
   },
