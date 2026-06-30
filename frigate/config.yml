@@ -1,0 +1,30 @@
+# Frigate NVR 設定例 (design-docs/16, NFR-005)
+# 入口カメラのみ録画。施術エリアには画角を向けない設置にすること。
+mqtt:
+  enabled: false
+
+record:
+  enabled: true
+  retain:
+    # 録画保持日数 (RECORDING_RETENTION_DAYS / 既定30日)
+    days: 30
+    mode: all
+
+cameras:
+  entrance_outdoor: # Tapo C320WS (屋外/入口・有線LAN推奨)
+    ffmpeg:
+      inputs:
+        - path: rtsp://USER:PASS@192.168.0.0:554/stream1
+          roles:
+            - record
+    detect:
+      enabled: false
+
+  entrance_indoor: # Tapo C225 (室内入口側)
+    ffmpeg:
+      inputs:
+        - path: rtsp://USER:PASS@192.168.0.0:554/stream1
+          roles:
+            - record
+    detect:
+      enabled: false

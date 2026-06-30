@@ -1,0 +1,245 @@
+// sds (Self-Datsumo System) — DB物理設計 (design-docs/22_DB物理設計.md, 14_データ設計_ER.md)
+// 注: 設計書は BIGINT PK を指定しているが、JSON シリアライズの容易さと
+//     アプリ/テスト全体の取り回しを優先し PK/FK は Int を採用。
+//     (詳細は IMPLEMENTATION_NOTES.md に記録)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// TBL-001 stores ----------------------------------------------------------
+model Store {
+  id                  Int      @id @default(autoincrement())
+  name                String
+  timezone            String   @default("Asia/Tokyo")
+  googleCalendarId    String?  @map("google_calendar_id")
+  switchbotLockId     String?  @map("switchbot_lock_id")
+  switchbotKeypadId   String   @map("switchbot_keypad_id") // createKey 対象
+  switchbotHubId      String?  @map("switchbot_hub_id")
+  boothCount          Int      @default(1) @map("booth_count")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  booths        Booth[]
+  businessHours BusinessHour[]
+  menus         Menu[]
+  reservations  Reservation[]
+  accessLogs    AccessLog[]
+  devices       Device[]
+
+  @@map("stores")
+}
+
+// TBL-002 booths ----------------------------------------------------------
+model Booth {
+  id      Int    @id @default(autoincrement())
+  storeId Int    @map("store_id")
+  name    String
+
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+
+  @@map("booths")
+}
+
+// TBL-003 business_hours --------------------------------------------------
+model BusinessHour {
+  id            Int    @id @default(autoincrement())
+  storeId       Int    @map("store_id")
+  weekday       Int // 0=日 .. 6=土
+  openTime      String @map("open_time") // "HH:mm"
+  closeTime     String @map("close_time") // "HH:mm"
+  slotMinutes   Int    @default(60) @map("slot_minutes")
+  bufferMinutes Int    @default(15) @map("buffer_minutes")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, weekday])
+  @@map("business_hours")
+}
+
+// TBL-004 customers -------------------------------------------------------
+model Customer {
+  id            Int       @id @default(autoincrement())
+  lineUserId    String    @unique @map("line_user_id")
+  displayName   String?   @map("display_name")
+  email         String?
+  agreedTermsAt DateTime? @map("agreed_terms_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  reservations  Reservation[]
+  notifications Notification[]
+
+  @@map("customers")
+}
+
+// TBL-005 menus -----------------------------------------------------------
+model Menu {
+  id              Int    @id @default(autoincrement())
+  storeId         Int?   @map("store_id") // NULL で全店共通
+  name            String
+  durationMinutes Int    @map("duration_minutes")
+  priceYen        Int    @map("price_yen")
+
+  store        Store?        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+
+  @@map("menus")
+}
+
+// TBL-006 reservations (中核) ---------------------------------------------
+model Reservation {
+  id            Int      @id @default(autoincrement())
+  customerId    Int      @map("customer_id")
+  storeId       Int      @map("store_id")
+  boothId       Int      @map("booth_id")
+  menuId        Int      @map("menu_id")
+  startAt       DateTime @map("start_at")
+  endAt         DateTime @map("end_at")
+  status        String   @default("confirmed") // pending/confirmed/cancelled/done/no_show
+  googleEventId String?  @map("google_event_id")
+  amountYen     Int      @default(0) @map("amount_yen")
+  paymentStatus String   @default("none") @map("payment_status") // none/unpaid/paid/refunded
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  customer       Customer        @relation(fields: [customerId], references: [id])
+  store          Store           @relation(fields: [storeId], references: [id])
+  booth          Booth           @relation(fields: [boothId], references: [id])
+  menu           Menu            @relation(fields: [menuId], references: [id])
+  passcode       Passcode?
+  payment        Payment?
+  accessLogs     AccessLog[]
+  scheduledTasks ScheduledTask[]
+
+  @@unique([boothId, startAt]) // 二重予約防止
+  @@index([storeId, startAt])
+  @@index([status])
+  @@map("reservations")
+}
+
+// TBL-007 passcodes (非同期 id に注意) ------------------------------------
+model Passcode {
+  id                Int      @id @default(autoincrement())
+  reservationId     Int      @unique @map("reservation_id")
+  switchbotDeviceId String   @map("switchbot_device_id")
+  switchbotKeyId    Int?     @map("switchbot_key_id") // createKey 結果 webhook で後埋め(削除に必須)
+  passcodeName      String   @map("passcode_name") // 例 r{reservationId}
+  codeHash          String   @map("code_hash") // 暗証番号のハッシュ(平文非保持)
+  type              String   @default("timeLimit")
+  validFrom         DateTime @map("valid_from")
+  validTo           DateTime @map("valid_to")
+  status            String   @default("pending") // pending/active/deleted/failed
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@unique([switchbotDeviceId, passcodeName])
+  @@map("passcodes")
+}
+
+// TBL-008 access_logs -----------------------------------------------------
+model AccessLog {
+  id            Int      @id @default(autoincrement())
+  storeId       Int      @map("store_id")
+  reservationId Int?     @map("reservation_id") // 推定紐付け
+  deviceId      String   @map("device_id")
+  eventType     String   @map("event_type") // locked/unlocked/door_open 等
+  occurredAt    DateTime @map("occurred_at")
+  rawJson       Json     @map("raw_json")
+
+  store       Store        @relation(fields: [storeId], references: [id])
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+
+  @@index([occurredAt])
+  @@map("access_logs")
+}
+
+// TBL-009 scheduled_tasks (信頼性の中核) ----------------------------------
+model ScheduledTask {
+  id            Int      @id @default(autoincrement())
+  type          String // issue_passcode/revoke_passcode/send_reminder/send_thanks/expire_unpaid
+  reservationId Int?     @map("reservation_id")
+  runAt         DateTime @map("run_at")
+  status        String   @default("scheduled") // scheduled/running/done/failed/cancelled
+  attempts      Int      @default(0)
+  lastError     String?  @map("last_error")
+  payloadJson   Json?    @map("payload_json")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+
+  @@index([status, runAt])
+  @@map("scheduled_tasks")
+}
+
+// TBL-010 notifications ---------------------------------------------------
+model Notification {
+  id            Int      @id @default(autoincrement())
+  customerId    Int      @map("customer_id")
+  channel       String   @default("line")
+  template      String
+  status        String   @default("sent") // sent/failed
+  sentAt        DateTime @default(now()) @map("sent_at")
+  lineMessageId String?  @map("line_message_id")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@map("notifications")
+}
+
+// TBL-011 webhook_events (冪等管理 / NFR-015) -----------------------------
+model WebhookEvent {
+  id                Int      @id @default(autoincrement())
+  provider          String // line/stripe/switchbot
+  eventId           String   @map("event_id")
+  signatureVerified Boolean  @default(false) @map("signature_verified")
+  processedAt       DateTime @default(now()) @map("processed_at")
+
+  @@unique([provider, eventId])
+  @@map("webhook_events")
+}
+
+// TBL-012 devices (死活/電池監視) -----------------------------------------
+model Device {
+  id                Int       @id @default(autoincrement())
+  storeId           Int       @map("store_id")
+  kind              String // lock/keypad/hub/camera
+  switchbotDeviceId String?   @map("switchbot_device_id")
+  battery           Int?
+  lastSeenAt        DateTime? @map("last_seen_at")
+  status            String    @default("unknown") // online/offline/warning/unknown
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("devices")
+}
+
+// TBL-013 payments (任意) -------------------------------------------------
+model Payment {
+  id              Int      @id @default(autoincrement())
+  reservationId   Int      @unique @map("reservation_id")
+  provider        String   @default("stripe")
+  stripeSessionId String?  @map("stripe_session_id")
+  amountYen       Int      @map("amount_yen")
+  status          String   @default("pending") // pending/paid/refunded/failed
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+// TBL-014 admin_users (Auth.js) -------------------------------------------
+model AdminUser {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         String   @default("owner")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("admin_users")
+}

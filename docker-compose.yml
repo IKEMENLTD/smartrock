@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sds
+      POSTGRES_PASSWORD: sds
+      POSTGRES_DB: sds
+      TZ: Asia/Tokyo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sds"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: sh -c "npx prisma migrate deploy && node server.js"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    command: npm run worker
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # 自前NVR。Web アプリとは疎結合 (design-docs/11)。
+  # 入口カメラ(Tapo)のみ録画し施術エリアは撮影しない (NFR-005)。
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    restart: unless-stopped
+    shm_size: "128mb"
+    environment:
+      TZ: Asia/Tokyo
+    volumes:
+      - ./frigate/config.yml:/config/config.yml:ro
+      - ./frigate/media:/media/frigate
+    ports:
+      - "5000:5000"
+      - "8554:8554"
+    profiles:
+      - recording
+
+volumes:
+  pgdata:
