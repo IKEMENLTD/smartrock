@@ -32,10 +32,22 @@ export class DomainError extends Error {
 
 /** Prisma の UNIQUE 制約違反(P2002)判定 (二重予約検知に使用) */
 export function isUniqueViolation(e: unknown): boolean {
-  return (
-    typeof e === "object" &&
-    e != null &&
-    "code" in e &&
-    (e as { code?: string }).code === "P2002"
-  );
+  return prismaCode(e) === "P2002";
+}
+
+/**
+ * Serializable トランザクションのシリアライズ失敗(書き込み競合)判定。
+ * P2034 = Transaction failed due to a write conflict or a deadlock。
+ * 同時予約で両者が重複チェックを通過した場合に片方がこれで失敗する。
+ */
+export function isSerializationFailure(e: unknown): boolean {
+  const code = prismaCode(e);
+  return code === "P2034" || code === "40001";
+}
+
+function prismaCode(e: unknown): string | undefined {
+  if (typeof e === "object" && e != null && "code" in e) {
+    return (e as { code?: string }).code;
+  }
+  return undefined;
 }

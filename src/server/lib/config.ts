@@ -49,7 +49,8 @@ export const config = {
     url: env("FRIGATE_URL") ?? "",
   },
   auth: {
-    secret: env("AUTH_SECRET") ?? "dev-secret",
+    // middleware の withAuth は NEXTAUTH_SECRET を使うため両者を揃える
+    secret: env("AUTH_SECRET") ?? env("NEXTAUTH_SECRET") ?? "dev-secret",
   },
   ops: {
     adminAlertLineUserId: env("ADMIN_ALERT_LINE_USER_ID") ?? "",

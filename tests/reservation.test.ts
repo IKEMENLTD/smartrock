@@ -97,6 +97,45 @@ describe("createReservation (TC-003/004/005)", () => {
     ).rejects.toMatchObject({ code: "slot_full" });
   });
 
+  it("TC-004b: 開始時刻が異なる時間帯重複も slot_full (枠長>slot)", async () => {
+    // 枠30分・所要60分 → 10:00予約(10:00-11:00)と10:30開始(10:30-11:30)は
+    // start_at が異なり UNIQUE では検知不能。範囲重複チェックで slot_full になること。
+    const fx = await createStoreFixture({
+      openTime: "10:00",
+      closeTime: "18:00",
+      slotMinutes: 30,
+      durationMinutes: 60,
+    });
+    const customer = await createCustomer();
+
+    const first = await createReservation({
+      customerId: customer.id,
+      storeId: fx.storeId,
+      boothId: fx.boothId,
+      menuId: fx.menuId,
+      startAt: `${DATE}T10:00:00+09:00`,
+      agreeTerms: true,
+    });
+    expect(first.status).toBe("confirmed");
+
+    await expect(
+      createReservation({
+        customerId: customer.id,
+        storeId: fx.storeId,
+        boothId: fx.boothId,
+        menuId: fx.menuId,
+        startAt: `${DATE}T10:30:00+09:00`, // 枠境界一致だが時間帯が重なる
+        agreeTerms: true,
+      }),
+    ).rejects.toMatchObject({ code: "slot_full" });
+
+    // 重複は1件のみ確定
+    const count = await prisma.reservation.count({
+      where: { boothId: fx.boothId, status: "confirmed" },
+    });
+    expect(count).toBe(1);
+  });
+
   it("TC-005: createKey が type/name/epoch で呼ばれる", async () => {
     const { fx, customer } = await setup();
 

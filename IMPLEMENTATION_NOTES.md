@@ -67,6 +67,29 @@
 - src 本体の実装バグは検出されず、`src/` への修正は不要だった
   (高優先 TC は現行実装のまま全て Pass)。
 
-## 未対応 / 残課題
+## 堅牢化 (レビュー指摘の修正)
 
-- (なし。優先度『高』TC は全件 Pass / design-docs/40 §6 の完了定義を満たす)
+DoD 達成後の自己レビューで見つかった穴を修正:
+
+1. **二重予約: 時間帯重複チェックを追加** (`reservation.ts`)。従来は
+   `UNIQUE(booth_id,start_at)` のみで、枠長 > slot_minutes やメニュー所要差による
+   「開始時刻が異なる重なり」を検知できなかった。`$transaction(Serializable)` 内で
+   `[startAt,endAt)` の範囲重複 SELECT → INSERT に変更し、設定に依存せず防止。
+   同時実行のシリアライズ失敗(P2034) と UNIQUE違反(P2002) を slot_full にマップ。
+   回帰テスト TC-004b 追加 (slot=30/所要=60 で 10:00 と 10:30 の重なりを弾く)。
+2. **Next.js を 14.2.15 → 14.2.35 にパッチ更新** (既知脆弱性対応)。
+3. **管理画面のサーバ側ガード** (`src/middleware.ts`)。`next-auth/middleware` の
+   `withAuth` で `/admin/*`(login除く) を JWT 保護し未認証は `/admin/login` へ。
+   クライアント側 `useAuthGuard` に加えた多重防御。
+   ※ `AUTH_SECRET` と `NEXTAUTH_SECRET` は同値にすること (withAuth は後者で検証)。
+
+## 未対応 / 残課題 (本番投入前に確認が必要なもの)
+
+- **SwitchBot 実機未検証**: `createKey` の `startTime/endTime` は設計書通り epoch秒で
+  送信。createKey 結果 webhook の payload 構造も公式準拠の推定実装。実機で1度疎通確認を。
+- **UI/認証フローのランタイム未実行**: テストは UseCase 層中心 (HTTP越しは
+  webhook/availability)。LIFF・管理画面はブラウザ手動確認が望ましい。
+- **デバイス死活/電池の定期ポーリングジョブは未配線** (取得関数 `frigate.getStatus` /
+  `switchbot.getDevices` はあるが cron への登録は未実装 / FR-010 Should)。
+- **公開エンドポイントのレート制限なし** / 規約ページ未作成 (リンクのみ)。
+- 上記以外、優先度『高』TC は全件 Pass / design-docs/40 §6 の完了定義を満たす。

@@ -12,7 +12,7 @@ import {
   TaskStatus,
   TaskType,
 } from "@/types/domain";
-import { DomainError, isUniqueViolation } from "./errors";
+import { DomainError, isUniqueViolation, isSerializationFailure } from "./errors";
 import { issuePasscode, revokePasscode } from "./passcode";
 
 const MS = 60_000;
@@ -117,34 +117,55 @@ export async function createReservation(params: {
   // 3. 決済判定
   const needsPayment = config.ops.paymentsEnabled && menu.priceYen > 0;
 
-  // 3(続). 二重予約防止: INSERT は UNIQUE(booth_id, start_at) に依存。
-  // 同時2リクエストは P2002 で片方のみ成功 → slot_full にマップ(TC-004)。
+  // 3(続). 二重予約防止 (設計書22「時間帯重複SELECT...FOR UPDATE」準拠)。
+  // トランザクション(Serializable)内で [startAt,endAt) の範囲重複を確認してから INSERT。
+  // これにより枠長 > slot_minutes やメニュー所要差による「開始時刻が異なる重なり」も防ぐ。
+  // 多重防御として UNIQUE(booth_id,start_at) も維持。
+  // - 既存と重複 → slot_full
+  // - 同時実行で両者がチェックを通過 → Serializable のシリアライズ失敗(P2034) を slot_full に
+  // - 同一 start_at の競合 → UNIQUE 違反(P2002) を slot_full に (TC-004)
+  const slotFull = new DomainError(
+    "slot_full",
+    "この枠は埋まりました。別の時間をお選びください",
+  );
   let reservationId: number;
   try {
-    const created = await prisma.reservation.create({
-      data: {
-        customerId,
-        storeId,
-        boothId,
-        menuId,
-        startAt,
-        endAt,
-        status: needsPayment
-          ? ReservationStatus.Pending
-          : ReservationStatus.Confirmed,
-        amountYen: needsPayment ? menu.priceYen : 0,
-        paymentStatus: needsPayment ? PaymentStatus.Unpaid : PaymentStatus.None,
+    reservationId = await prisma.$transaction(
+      async (tx) => {
+        const overlap = await tx.reservation.findFirst({
+          where: {
+            boothId,
+            status: { in: [ReservationStatus.Pending, ReservationStatus.Confirmed] },
+            startAt: { lt: endAt },
+            endAt: { gt: startAt },
+          },
+          select: { id: true },
+        });
+        if (overlap) throw slotFull;
+
+        const created = await tx.reservation.create({
+          data: {
+            customerId,
+            storeId,
+            boothId,
+            menuId,
+            startAt,
+            endAt,
+            status: needsPayment
+              ? ReservationStatus.Pending
+              : ReservationStatus.Confirmed,
+            amountYen: needsPayment ? menu.priceYen : 0,
+            paymentStatus: needsPayment ? PaymentStatus.Unpaid : PaymentStatus.None,
+          },
+          select: { id: true },
+        });
+        return created.id;
       },
-      select: { id: true },
-    });
-    reservationId = created.id;
+      { isolationLevel: "Serializable" },
+    );
   } catch (e) {
-    if (isUniqueViolation(e)) {
-      throw new DomainError(
-        "slot_full",
-        "この枠は埋まりました。別の時間をお選びください",
-      );
-    }
+    if (e === slotFull) throw slotFull;
+    if (isUniqueViolation(e) || isSerializationFailure(e)) throw slotFull;
     throw e;
   }
 
