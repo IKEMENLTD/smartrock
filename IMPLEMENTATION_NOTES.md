@@ -46,6 +46,27 @@
 4. `revoke_passcode` タスクは `switchbot_key_id` 依存。webhook 未達で id が NULL の
    ままなら削除不能 → リトライしても埋まらない場合は管理者へ手動削除を通知 (運用フォールバック)。
 
+## テスト基盤 (Phase B / Vitest)
+
+- `tests/` に機能別テストを実装。優先度『高』TC を含む全 TC が Pass
+  (TC-001〜020, `npm test` = 24 tests passed)。
+- ヘルパ: `tests/helpers/fixtures.ts` (store/booth/business_hours/menu/customer/
+  reservation の最小生成), `tests/helpers/mocks.ts` (Service モック; `vi.fn()`)。
+- 外部連携は全て `setServicesForTest()` でモック化。DB は実 `sds_test` を使用。
+
+### vitest.config.ts の調整 (setup.ts は不変更)
+
+1. **`test.env` で `.env.test` を先行注入**: `tests/setup.ts` の `dotenv` は ESM の
+   import 巻き上げにより Prisma エンジンの env スナップショットに間に合わず
+   `DATABASE_URL not found` になる。worker 起動前に `process.env` へ載るよう
+   `test.env` 経由で `.env.test` を読み込むようにした (setup.ts は触らない)。
+2. **並行実行の無効化** (`fileParallelism:false`, `singleThread/singleFork`,
+   `sequence.concurrent:false`): 全テストが単一の `sds_test` を共有し、各テストの
+   `beforeEach` truncate が他ファイルのテストと競合して FK/UNIQUE 違反を起こすため。
+
+- src 本体の実装バグは検出されず、`src/` への修正は不要だった
+  (高優先 TC は現行実装のまま全て Pass)。
+
 ## 未対応 / 残課題
 
-- (Phase B 実装中に追記)
+- (なし。優先度『高』TC は全件 Pass / design-docs/40 §6 の完了定義を満たす)
